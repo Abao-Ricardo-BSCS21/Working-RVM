@@ -18,10 +18,19 @@ import {
 export async function processBottleSubmission(
   studentDbId: number,
   machineId?: number,
-  weightGrams?: number
+  weightGrams?: number,
+  options?: {
+    material?: string;
+    /** Short label used in the student notification, e.g. "plastic bottle" or "can". */
+    itemLabel?: string;
+    source?: string;
+    item?: string;
+  }
 ) {
   const weight = weightGrams ?? BOTTLE_WEIGHT_KG * 1000;
   const points = POINTS_PER_BOTTLE;
+  const material = options?.material ?? "PET";
+  const itemLabel = options?.itemLabel ?? "plastic bottle";
 
   const result = await prisma.$transaction(async (tx) => {
     const student = await tx.student.update({
@@ -40,11 +49,17 @@ export async function processBottleSubmission(
         pointsEarned: points,
         weightKg: weight / 1000,
         machineId,
+        metadata: options?.source
+          ? { source: options.source, item: options.item ?? material }
+          : undefined,
         bottle: {
           create: {
-            material: "PET",
+            material,
             weightGrams: weight,
             isValid: true,
+            sensorData: options?.source
+              ? { source: options.source, item: options.item ?? material }
+              : undefined,
           },
         },
       },
@@ -61,8 +76,8 @@ export async function processBottleSubmission(
     await tx.notification.create({
       data: {
         userId: student.userId,
-        title: "Bottle Accepted!",
-        message: `You earned ${points} reward points for recycling a plastic bottle.`,
+        title: itemLabel === "can" ? "Can Accepted!" : "Bottle Accepted!",
+        message: `You earned ${points} reward points for recycling a ${itemLabel}.`,
         type: NotificationType.BOTTLE_ACCEPTED,
       },
     });
@@ -70,9 +85,9 @@ export async function processBottleSubmission(
     return { student, transaction };
   });
 
-  await checkAndUnlockAchievements(studentDbId);
+  const achievements = await checkAndUnlockAchievements(studentDbId);
 
-  return result;
+  return { ...result, achievements };
 }
 
 /** Bottles / points earned from bottle submissions in the current calendar month. */

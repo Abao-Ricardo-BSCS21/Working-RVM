@@ -8,8 +8,6 @@ import {
   CheckCircle2,
   XCircle,
   Cpu,
-  Thermometer,
-  Gauge,
   ScanBarcode,
   LogOut,
   Sticker,
@@ -17,7 +15,13 @@ import {
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Progress } from "@/components/ui/progress";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { ConfettiTrigger } from "@/components/ui/animated-counter";
 import { BarcodeScanInput } from "@/components/barcode/barcode-scan-input";
 import { toast } from "sonner";
@@ -50,15 +54,31 @@ export default function RecyclePage() {
     newAchievement?: { name: string; icon: string } | null;
   } | null>(null);
   const [showConfetti, setShowConfetti] = useState(false);
+  const [arduinoOnline, setArduinoOnline] = useState(false);
+  const [lastHardwareItem, setLastHardwareItem] = useState<string | null>(null);
+  const [notice, setNotice] = useState<{
+    title: string;
+    message: string;
+  } | null>(null);
   const sessionTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const seenEventId = useRef(0);
+  const primedEvents = useRef(false);
 
   const clearSession = useCallback(() => {
+    const studentDbId = scannedStudent?.id;
     setScannedStudent(null);
     setSessionEndsAt(null);
     setSecondsLeft(0);
     setState("idle");
     setResult(null);
-  }, []);
+    if (studentDbId) {
+      fetch("/api/hardware/session", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ studentDbId: Number(studentDbId) }),
+      }).catch(() => {});
+    }
+  }, [scannedStudent]);
 
   useEffect(() => {
     if (!sessionEndsAt) {
@@ -86,7 +106,7 @@ export default function RecyclePage() {
     const res = await fetch("/api/barcode/lookup", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ code }),
+      body: JSON.stringify({ code, armMachine: true }),
     });
     const data = await res.json();
 
@@ -103,7 +123,10 @@ export default function RecyclePage() {
     setSessionEndsAt(Date.now() + minutes * 60 * 1000);
     setState("idle");
     setResult(null);
-    toast.success(`Welcome, ${student.firstName}! Ready to recycle.`);
+    setNotice({
+      title: "Barcode scanned",
+      message: `Welcome, ${student.firstName}. Insert a bottle or can to earn points.`,
+    });
   };
 
   const handleInsertBottle = async () => {
@@ -133,6 +156,10 @@ export default function RecyclePage() {
       setState("accepted");
       setResult(data.data);
       setShowConfetti(true);
+      setNotice({
+        title: "Bottle accepted",
+        message: `Success. You earned ${data.data.pointsEarned} points.`,
+      });
       setScannedStudent((prev) =>
         prev
           ? {
@@ -157,6 +184,93 @@ export default function RecyclePage() {
   };
 
   useEffect(() => {
+    let cancelled = false;
+
+    const poll = async () => {
+      try {
+        const res = await fetch(
+          `/api/hardware/status?since=${seenEventId.current}`
+        );
+        const data = await res.json();
+        if (!data.success || cancelled) return;
+
+        setArduinoOnline(Boolean(data.data.link?.online));
+        setLastHardwareItem(data.data.link?.lastItem ?? null);
+
+        const events = (data.data.events ?? []) as {
+          id: number;
+          item: string;
+          credited: boolean;
+          duplicate: boolean;
+          studentId: string | null;
+          pointsEarned: number | null;
+          totalPoints: number | null;
+          totalBottles: number | null;
+          message: string;
+          achievementName: string | null;
+        }[];
+
+        if (!primedEvents.current) {
+          primedEvents.current = true;
+          seenEventId.current = events.reduce(
+            (max, event) => Math.max(max, event.id),
+            seenEventId.current
+          );
+          return;
+        }
+
+        for (const event of events) {
+          seenEventId.current = Math.max(seenEventId.current, event.id);
+          if (event.item === "PING" || event.duplicate) continue;
+
+          if (event.credited) {
+            setState("accepted");
+            setResult({
+              pointsEarned: event.pointsEarned ?? undefined,
+              totalPoints: event.totalPoints ?? undefined,
+              totalBottles: event.totalBottles ?? undefined,
+              newAchievement: event.achievementName
+                ? { name: event.achievementName, icon: "" }
+                : null,
+            });
+            setShowConfetti(true);
+            setScannedStudent((prev) =>
+              prev && prev.studentId === event.studentId
+                ? {
+                    ...prev,
+                    rewardPoints: event.totalPoints ?? prev.rewardPoints,
+                    bottlesRecycled: event.totalBottles ?? prev.bottlesRecycled,
+                  }
+                : prev
+            );
+            const itemLabel = event.item === "CAN" ? "Can" : "Bottle";
+            setNotice({
+              title: `${itemLabel} accepted`,
+              message: `Success. You earned ${event.pointsEarned ?? 0} points.`,
+            });
+            if (event.achievementName) {
+              toast.success(`Achievement unlocked: ${event.achievementName}!`, {
+                duration: 5000,
+              });
+            }
+          } else {
+            toast.message(event.message);
+          }
+        }
+      } catch {
+        if (!cancelled) setArduinoOnline(false);
+      }
+    };
+
+    poll();
+    const timer = setInterval(poll, 2000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, []);
+
+  useEffect(() => {
     if (state === "accepted" || state === "rejected") {
       const timer = setTimeout(() => {
         setState("idle");
@@ -175,6 +289,15 @@ export default function RecyclePage() {
   return (
     <div className="mx-auto max-w-2xl space-y-6">
       <ConfettiTrigger trigger={showConfetti} />
+      <Dialog open={notice !== null} onOpenChange={(open) => !open && setNotice(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{notice?.title}</DialogTitle>
+            <DialogDescription>{notice?.message}</DialogDescription>
+          </DialogHeader>
+          <Button onClick={() => setNotice(null)}>OK</Button>
+        </DialogContent>
+      </Dialog>
 
       <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
         <div>
@@ -308,7 +431,7 @@ export default function RecyclePage() {
                 </p>
                 <p className="mb-8 text-center text-sm text-muted-foreground">
                   {state === "idle" &&
-                    "Place your PET plastic bottle and click Insert Bottle"}
+                    "Insert a bottle or can. The Arduino reports it over Ethernet. Insert Bottle still works without the machine."}
                   {state === "validating" &&
                     "Sensors are checking material and weight"}
                   {state === "accepted" &&
@@ -375,45 +498,37 @@ export default function RecyclePage() {
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-base">
             <Cpu size={18} className="text-primary" />
-            Machine Sensors (Simulated)
+            Arduino W5500
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
-          {[
-            { label: "IR Sensor", status: "Active", icon: Gauge },
-            { label: "Load Cell", status: "Active", icon: Gauge },
-            { label: "Ultrasonic", status: "Active", icon: Gauge },
-            { label: "Material Detection", status: "Active", icon: Gauge },
-            { label: "Barcode Scanner", status: "HID ready", icon: ScanBarcode },
-          ].map((sensor) => (
-            <div
-              key={sensor.label}
-              className="flex items-center justify-between"
-            >
-              <div className="flex items-center gap-2">
-                <sensor.icon size={16} className="text-muted-foreground" />
-                <span className="text-sm">{sensor.label}</span>
-              </div>
-              <span className="flex items-center gap-1.5 text-xs text-primary">
-                <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-primary" />
-                {sensor.status}
-              </span>
-            </div>
-          ))}
-          <div className="flex items-center justify-between border-t border-border/50 pt-2">
+          <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
-              <Thermometer size={16} className="text-muted-foreground" />
-              <span className="text-sm">Temperature</span>
+              <Cpu size={16} className="text-muted-foreground" />
+              <span className="text-sm">Ethernet link</span>
             </div>
-            <span className="text-sm">24.5°C</span>
+            <span
+              className={`flex items-center gap-1.5 text-xs ${
+                arduinoOnline ? "text-primary" : "text-muted-foreground"
+              }`}
+            >
+              <span
+                className={`h-1.5 w-1.5 rounded-full ${
+                  arduinoOnline ? "animate-pulse bg-primary" : "bg-muted-foreground"
+                }`}
+              />
+              {arduinoOnline ? "Online" : "Waiting for Arduino"}
+            </span>
           </div>
-          <div>
-            <div className="mb-1 flex justify-between text-sm">
-              <span>Storage Capacity</span>
-              <span>127/500</span>
-            </div>
-            <Progress value={25.4} />
+          <div className="flex items-center justify-between">
+            <span className="text-sm">Last item</span>
+            <span className="text-sm">{lastHardwareItem ?? "—"}</span>
           </div>
+          <p className="text-xs text-muted-foreground">
+            Pin D2 reports a bottle and pin D3 reports a can. Scan your barcode
+            first so the deposit is credited to you. Points land on the first
+            machine marked online.
+          </p>
         </CardContent>
       </Card>
     </div>

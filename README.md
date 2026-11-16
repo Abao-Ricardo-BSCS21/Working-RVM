@@ -127,16 +127,46 @@ src/
     └── seed.ts             # Seed data
 ```
 
-## Hardware Integration (Future)
+## Hardware Integration (Arduino Uno + W5500)
 
-The `src/lib/hardware/` module provides interfaces ready for:
+The vending machine talks to this app over Ethernet. The Arduino cannot use `localhost` — that name only exists on the PC. It calls the PC's ethernet address instead.
 
-- NFC card readers
-- Arduino Mega / ESP32
-- IR sensors, load cells, ultrasonic sensors
-- Material detection sensors
+```
+Arduino Uno  --SPI-->  W5500  --ethernet cable-->  this PC (Next.js on port 3000)
+```
 
-Replace `Simulated*` classes with real device drivers without changing the application layer.
+Direct cable (no router):
+
+1. Set the PC ethernet adapter to IPv4 `192.168.4.1`, mask `255.255.255.0`. Leave gateway blank.
+2. Start the app with `npm run dev` (it listens on every network interface, port 3000).
+3. If Windows Firewall asks, allow Node.js on private networks.
+4. Open the sketch in `hardware/arduino-w5500/filcycle_w5500/filcycle_w5500.ino`, install the board **Ethernet** library if needed, and upload it.
+5. On the student Recycle page, scan a barcode, then trigger pin 2 (bottle) or pin 3 (can). The page awards points while that scan session is open. The deposit is stored on the first machine whose status is ONLINE.
+
+W5500 wiring (Uno hardware SPI):
+
+| W5500 | Uno |
+| ----- | --- |
+| VCC   | 5V (use 3.3V if your module has no onboard regulator) |
+| GND   | GND |
+| MOSI  | D11 |
+| MISO  | D12 |
+| SCLK  | D13 |
+| CS    | D10 |
+
+D2 to GND means `BOTTLE`. D3 to GND means `CAN`. The Serial Monitor at 9600 baud also accepts `B`, `C`, or `P`.
+
+The sketch calls:
+
+```
+GET /api/hardware/update?item=BOTTLE&key=filcycle-dev
+```
+
+`HARDWARE_KEY` in `.env` must match the sketch. A heartbeat (`item=PING`) every few seconds marks the link online on the Recycle page and Machine monitor.
+
+Same-router setup: in the sketch set `USE_STATIC_IP` to `0` and set `serverIp` to the PC's LAN address (the address `ipconfig` shows, not `127.0.0.1`).
+
+The on-screen **Insert Bottle** button still records a bottle without the Arduino.
 
 ## API Endpoints
 
@@ -148,6 +178,7 @@ Replace `Simulated*` classes with real device drivers without changing the appli
 | GET/POST/PUT | `/api/rewards`         | Reward catalog & redemption   |
 | GET          | `/api/transactions`    | Transaction history           |
 | GET/PUT/POST | `/api/machine`         | Machine monitoring            |
+| GET/POST     | `/api/hardware/update` | Arduino W5500 item ingest (`item=BOTTLE\|CAN\|PING`) |
 | GET/PUT      | `/api/notifications`   | User notifications            |
 | GET          | `/api/reports`         | Generate reports              |
 | GET/POST     | `/api/students`        | Student management            |

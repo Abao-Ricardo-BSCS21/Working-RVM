@@ -1,6 +1,8 @@
 /**
  * Hardware abstraction layer for future IoT integration.
- * Replace Simulated* implementations with real device drivers
+ * The Arduino Uno + W5500 does not use these classes. It pushes BOTTLE/CAN
+ * events to /api/hardware/update. Simulated* classes remain the fallback
+ * for the on-screen Insert Bottle button.
  * (Arduino Mega, ESP32, NFC readers, USB barcode scanners, load cells, IR/ultrasonic sensors).
  */
 

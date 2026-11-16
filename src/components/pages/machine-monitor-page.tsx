@@ -30,6 +30,11 @@ interface Machine {
 export default function MachineMonitorPage() {
   const [machines, setMachines] = useState<Machine[]>([]);
   const [hardware, setHardware] = useState<Record<string, unknown> | null>(null);
+  const [ethernet, setEthernet] = useState<{
+    online: boolean;
+    lastItem: string | null;
+    lastSeenAt: string | null;
+  } | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -39,16 +44,33 @@ export default function MachineMonitorPage() {
         if (d.success) {
           setMachines(d.data.machines);
           setHardware(d.data.hardware);
+          setEthernet(d.data.ethernet ?? null);
         }
       })
       .catch(() => {})
       .finally(() => setLoading(false));
 
-    const interval = setInterval(() => {
+    const refresh = setInterval(() => {
+      fetch("/api/machine")
+        .then((r) => r.json())
+        .then((d) => {
+          if (d.success) {
+            setMachines(d.data.machines);
+            setHardware(d.data.hardware);
+            setEthernet(d.data.ethernet ?? null);
+          }
+        })
+        .catch(() => {});
+    }, 5000);
+
+    const health = setInterval(() => {
       fetch("/api/machine", { method: "POST" }).catch(() => {});
     }, 30000);
 
-    return () => clearInterval(interval);
+    return () => {
+      clearInterval(refresh);
+      clearInterval(health);
+    };
   }, []);
 
   if (loading) {
@@ -76,7 +98,14 @@ export default function MachineMonitorPage() {
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-bold">Machine Monitoring</h1>
-        <p className="text-muted-foreground">IoT dashboard — simulated hardware interface</p>
+        <p className="text-muted-foreground">
+          IoT dashboard
+          {ethernet
+            ? ethernet.online
+              ? ` — Arduino W5500 online${ethernet.lastItem ? `, last item ${ethernet.lastItem}` : ""}`
+              : " — Arduino W5500 not seen yet"
+            : ""}
+        </p>
       </div>
 
       <div className="grid gap-6 lg:grid-cols-2">
@@ -193,7 +222,7 @@ export default function MachineMonitorPage() {
           </CardHeader>
           <CardContent>
             <p className="text-sm text-muted-foreground mb-4">
-              Simulated module ready for Arduino Mega / ESP32 integration
+              Arduino Uno + W5500 reports bottles and cans to /api/hardware/update
             </p>
             <pre className="rounded-xl bg-muted/20 p-4 text-xs overflow-x-auto">
               {JSON.stringify(hardware, null, 2)}

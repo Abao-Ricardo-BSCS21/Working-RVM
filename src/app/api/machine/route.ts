@@ -5,6 +5,7 @@ import { requireAuth } from "@/lib/permissions";
 import prisma from "@/lib/prisma";
 import { machineStatusSchema } from "@/lib/validations";
 import { hardware } from "@/lib/hardware";
+import { getEthernetLink } from "@/lib/hardware/ethernet-bridge";
 import { logMachineEvent, notifyAdmins } from "@/lib/services/recycling-service";
 import { LogLevel, NotificationType } from "@prisma/client";
 
@@ -33,7 +34,11 @@ export async function GET(request: NextRequest) {
 
   const hwStatus = await hardware.machineController.getStatus();
 
-  return apiResponse({ machines, hardware: hwStatus });
+  return apiResponse({
+    machines,
+    hardware: hwStatus,
+    ethernet: getEthernetLink(),
+  });
 }
 
 export async function PUT(request: NextRequest) {

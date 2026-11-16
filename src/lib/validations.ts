@@ -29,6 +29,8 @@ export const bottleSubmissionSchema = z.object({
 
 export const barcodeLookupSchema = z.object({
   code: z.string().min(1, "Barcode is required"),
+  /** Recycle page only: hold this student open so the W5500 can award points. */
+  armMachine: z.boolean().optional(),
 });
 
 export const barcodeRegenerateSchema = z.object({

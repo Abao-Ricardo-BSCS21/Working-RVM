@@ -6,6 +6,7 @@ import { barcodeLookupSchema } from "@/lib/validations";
 import { findStudentByBarcode } from "@/lib/services/barcode-service";
 import { BARCODE_CONFIG } from "@/lib/constants/barcode";
 import { normalizeBarcodeInput } from "@/lib/utils/barcode";
+import { armMachineSession } from "@/lib/hardware/ethernet-bridge";
 import prisma from "@/lib/prisma";
 
 /**
@@ -48,6 +49,22 @@ export async function POST(request: NextRequest) {
         "This barcode belongs to another student. Scan your own sticker.",
         403
       );
+    }
+  }
+
+  if (parsed.data.armMachine) {
+    const machine = await prisma.machine.findFirst({
+      where: { status: "ONLINE" },
+      orderBy: { id: "asc" },
+    });
+    if (machine) {
+      armMachineSession({
+        studentDbId: student.id,
+        studentId: student.studentId,
+        firstName: student.firstName,
+        lastName: student.lastName,
+        machineId: machine.id,
+      });
     }
   }
 
